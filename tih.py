@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
 import urllib3
 import time
+import socks
+from telethon.errors import FileReferenceExpiredError
 
 # 禁用 InsecureRequestWarning
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -18,16 +20,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class TelegramImageDownloader:
-    def __init__(self, api_id, api_hash, channel_list, download_directory, max_messages=None):
+    def __init__(self, api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=None, batch_size=1000):
         self.api_id = api_id
         self.api_hash = api_hash
         self.channel_list = channel_list
         self.download_directory = download_directory
         self.max_messages = max_messages
+        self.batch_size = batch_size  # 每批次处理的消息数量
         self.zip_info_file = os.path.join(download_directory, "zip_info.json")  # ZIP 文件信息保存路径
 
         # 创建 Telegram 客户端
-        self.client = TelegramClient(StringSession(string_session), self.api_id, self.api_hash)
+        if not proxy:
+            self.client = TelegramClient(StringSession(string_session), api_id, api_hash)
+        else:
+            self.client = TelegramClient(StringSession(string_session), api_id, api_hash, proxy=proxy)
 
         # 确保保存目录存在
         if not os.path.exists(self.download_directory):
@@ -46,7 +52,7 @@ class TelegramImageDownloader:
             return  # 跳过 ZIP 文件的下载
 
         if message.photo or (message.document and message.document.mime_type in ['image/jpeg', 'image/png', 'image/gif']):
-            await self.download_file(message, channel)
+            await self.download_file_with_retry(message, channel)
 
         if hasattr(message.media, 'webpage'):
             url = message.media.webpage.url
@@ -75,6 +81,20 @@ class TelegramImageDownloader:
             json.dump(existing_info, f, ensure_ascii=False, indent=4)
 
         logger.info(f"Recorded ZIP file info: {zip_info}")
+
+    async def download_file_with_retry(self, message, channel, retries=3):
+        """下载单个文件（图片），并处理 FileReferenceExpiredError"""
+        for attempt in range(retries):
+            try:
+                await self.download_file(message, channel)
+                break  # 成功下载后退出循环
+            except FileReferenceExpiredError:
+                logger.warning(f"File reference expired for message {message.id}, retrying {attempt + 1}/{retries}...")
+                if attempt == retries - 1:
+                    logger.error(f"Failed to download message {message.id} after {retries} attempts.")
+            except Exception as e:
+                logger.error(f"Error downloading message {message.id}: {e}")
+                break
 
     async def download_file(self, message, channel):
         """下载单个文件（图片）"""
@@ -166,16 +186,16 @@ class TelegramImageDownloader:
             async for reply in self.client.iter_messages(channel, reply_to=message.id):
                 await self.download_media(reply, channel)
 
+    async def process_batch(self, channel, offset_id=0):
+        """处理一批消息"""
+        tasks = []
+        async for message in self.client.iter_messages(channel, limit=self.batch_size, offset_id=offset_id):
+            tasks.append(self.download_media(message, channel))
+        await asyncio.gather(*tasks)
+        logger.info(f"Finished processing batch for channel {channel} with offset_id {offset_id}")
+
     async def download_images(self):
-        """并发下载图片"""
-        semaphore = asyncio.Semaphore(10)  # 控制并发任务数量
-
-        async def limited_download_media(message, channel, reply):
-            async with semaphore:
-                await self.download_media(message, channel)
-                if reply:
-                    await self.download_comments(message, channel)
-
+        """分批异步下载图片"""
         for channel in self.channel_list:
             reply = False
             if 'reply' in channel:
@@ -183,11 +203,18 @@ class TelegramImageDownloader:
                 reply = True
             logger.info(f"Processing channel: {channel}")
 
-            tasks = []
-            async for message in self.client.iter_messages(channel, limit=self.max_messages):
-                tasks.append(limited_download_media(message, channel, reply))
+            offset_id = 0
+            while True:
+                # 处理当前批次
+                await self.process_batch(channel, offset_id)
 
-            await asyncio.gather(*tasks)
+                # 更新 offset_id 为当前批次最后一条消息的 ID
+                async for message in self.client.iter_messages(channel, limit=1, offset_id=offset_id + self.batch_size):
+                    offset_id = message.id
+
+                # 如果没有更多消息，退出循环
+                if offset_id == 0:
+                    break
 
         logger.info("所有图片下载完成。")
 
@@ -202,18 +229,19 @@ if __name__ == "__main__":
     # 替换为你的 API ID 和 Hash
     api_id = 6627460
     api_hash = '27a53a0965e486a2bc1b1fcde473b1c4'
-    # 换成自己的string_session，可以从 https://tg.uu8.pro/ 获取
     string_session = 'xxx'
     # 下载路径
     download_directory = 'imgs'
     # 替换为你要下载图片的频道/群组列表
-    channel_list = ["antouxiang", "bizhi_touxiang", "pkpussy", "lzlcn", "xuexiziliao2", "da13133", "Zaz19966", "mcmckcf", "meixue666", "holyfcuk2A1", "OFyyds", "scjpictures", "xiucheduixa", "bkyss233", "private_photography"]
+    channel_list = ["aidapigu","antouxiang", "bizhi_touxiang", "pkpussy", "lzlcn", "xuexiziliao2", "da13133", "Zaz19966", "mcmckcf", "meixue666", "holyfcuk2A1", "OFyyds", "scjpictures", "bkyss233", "private_photography"]
     # 有zip附件
-    # channel_list = ["fulizpcptp", "Zaz19966", "bkyss233chat", "pusajie2"]
+    # channel_list = ["kid2333333","fulizpcptp", "Zaz19966", "bkyss233chat", "pusajie2", "xiucheduixa"]
     # 图片在评论中
     # channel_list = ["XieZhen02|reply", "pusajie|reply", "nihongASMR|reply", "Coserfuliji|reply", "GQ4KHD|reply"]
     # 图片在即时预览中
     # channel_list = ["f_ck_r"]
+    # 代理
+    proxy = (socks.SOCKS5, '127.0.0.1', 7897)
     # 创建下载器实例并运行
-    downloader = TelegramImageDownloader(api_id, api_hash, channel_list, download_directory, max_messages=None)
+    downloader = TelegramImageDownloader(api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=proxy, batch_size=1000)
     downloader.run()
