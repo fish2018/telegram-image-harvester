@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class TelegramImageDownloader:
-    def __init__(self, api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=None, batch_size=1000, max_concurrent_tasks=5, request_delay=1):
+    def __init__(self, api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=None, batch_size=1000, max_concurrent_tasks=10, request_delay=0.01):
         self.api_id = api_id
         self.api_hash = api_hash
         self.channel_list = channel_list
