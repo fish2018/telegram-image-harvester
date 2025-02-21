@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class TelegramImageDownloader:
-    def __init__(self, api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=None, batch_size=1000, max_concurrent_tasks=5, request_delay=0.01):
+    def __init__(self, api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=None, batch_size=1000, max_concurrent_tasks=5, request_delay=1):
         self.api_id = api_id
         self.api_hash = api_hash
         self.channel_list = channel_list
@@ -173,8 +173,8 @@ class TelegramImageDownloader:
         for attempt in range(3):  # 最大重试次数
             try:
                 response = requests.get(img_url, verify=False)  # 设置 verify=False 以跳过 SSL 验证
-                if response.status_code == 404:  # 如果返回 404，直接跳过
-                    logger.warning(f"图片不存在: {image_name}，跳过。")
+                if response.status_code in [404,403]:  # 如果返回 404,403，直接跳过
+                    # logger.warning(f"图片不存在或无权限下载: {image_name}，跳过。")
                     return
                 response.raise_for_status()  # 检查请求是否成功
                 with open(file_path, 'wb') as f:
@@ -182,8 +182,8 @@ class TelegramImageDownloader:
                 logger.info(f"下载完成: {image_name} from {channel}")
                 return  # 成功后返回
             except requests.exceptions.HTTPError as e:
-                if e.response.status_code == 404:  # 如果返回 404，直接跳过
-                    logger.warning(f"图片不存在: {image_name}，跳过。")
+                if e.response.status_code in [404,403]:  # 如果返回 404,403，直接跳过
+                    # logger.warning(f"图片不存在或无权限下载: {image_name}，跳过。")
                     return
                 logger.error(f"下载失败: {image_name}，错误: {e}，正在重试 {attempt + 1}/3...")
                 time.sleep(2)  # 等待一段时间后重试
