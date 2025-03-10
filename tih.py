@@ -20,7 +20,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class TelegramImageDownloader:
-    def __init__(self, api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=None, batch_size=1000, max_concurrent_tasks=10, request_delay=0.01):
+    def __init__(self, api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=None, batch_size=1000, max_concurrent_tasks=10, request_delay=0.01, only_zip=False):
+        self.only_zip = only_zip
         self.api_id = api_id
         self.api_hash = api_hash
         self.channel_list = channel_list
@@ -49,23 +50,39 @@ class TelegramImageDownloader:
     async def download_media(self, message, channel):
         """下载单张图片或即时预览中的图片"""
         # 检查是否是 ZIP 文件
-        if message.document and message.document.mime_type == 'application/zip':
+        # if message.document and message.document.mime_type == 'application/zip':
+        # 定义支持的压缩文件类型
+        compressed_types = {
+            'application/zip': '.zip',
+            'application/x-rar-compressed': '.rar',
+            'application/x-7z-compressed': '.7z'
+        }
+        mime_type = getattr(message.document, 'mime_type', None)
+        file_name = getattr(message.document, 'file_name', None)
+
+        # 判断是否为压缩文件：基于 mime_type 或文件扩展名
+        is_compressed = (mime_type in compressed_types) or \
+                        (file_name and any(file_name.lower().endswith(ext) for ext in compressed_types.values()))
+
+        if is_compressed:
             await self.record_zip_info(message, channel)
             return  # 跳过 ZIP 文件的下载
 
-        if message.photo or (message.document and message.document.mime_type in ['image/jpeg', 'image/png', 'image/gif']):
-            await self.download_file_with_retry(message, channel)
+        if not self.only_zip:
+            if message.photo or (message.document and message.document.mime_type in ['image/jpeg', 'image/png', 'image/gif']):
+                await self.download_file_with_retry(message, channel)
 
-        if hasattr(message.media, 'webpage'):
-            url = message.media.webpage.url
-            if 'https://telegra.ph/' in url:
-                await self.download_webpage_photos(url, channel)
+            if hasattr(message.media, 'webpage'):
+                url = message.media.webpage.url
+                if 'https://telegra.ph/' in url:
+                    await self.download_webpage_photos(url, channel)
 
     async def record_zip_info(self, message, channel):
         """记录 ZIP 文件的信息到 JSON 文件"""
         zip_info = {
             "message_link": f"https://t.me/{channel}/{message.id}",  # 消息链接
             "text": message.text or "",  # 消息文本内容
+            "file_name": message.file.name,
             "file_size": message.document.size,  # 文件大小（字节）
             "channel": channel,  # 频道名称
             "message_id": message.id  # 消息 ID
@@ -265,16 +282,13 @@ if __name__ == "__main__":
     api_id = 6627460
     api_hash = '27a53a0965e486a2bc1b1fcde473b1c4'
     string_session = 'xxx'
+
     # 下载路径
     download_directory = 'imgs'
     # 替换为你要下载图片的频道/群组列表
-    channel_list = ["aidapigu", "antouxiang", "bizhi_touxiang", "pkpussy", "lzlcn", "xuexiziliao2", "da13133",
-                    "Zaz19966", "mcmckcf", "meixue666", "holyfcuk2A1", "OFyyds", "scjpictures", "bkyss233", "f_ck_r",
-                    "private_photography", "kid2333333", "fulizpcptp", "Zaz19966", "bkyss233chat", "xiucheduixa",
-                    "XieZhen02|reply", "pusajie|reply", "nihongASMR|reply", "Coserfuliji|reply", "GQ4KHD|reply",
-                    "pusajie2|reply"]
-    # 代理
+    channel_list = []
+    # 代理 不用代理设置proxy=None
     proxy = (socks.SOCKS5, '127.0.0.1', 7897)
     # 创建下载器实例并运行
-    downloader = TelegramImageDownloader(api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=proxy, batch_size=1000, max_concurrent_tasks=10, request_delay=0.01)
+    downloader = TelegramImageDownloader(api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=proxy, batch_size=1000, max_concurrent_tasks=10, request_delay=0.01, only_zip=False)
     downloader.run()
