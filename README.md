@@ -27,3 +27,4 @@
 - 修复offset_id不能自动递增bug
 - 排除`MessageService`类型消息
 - 支持压缩包分卷的消息，其`mime_type`类型为`application/octet-stream`
+- 新增`TGSender`脚本，可以将压缩包发送到指定的频道/群组(没有下载上传操作)，可直接加到定时任务执行，默认每次发送20条，已发过的不会重复发送
