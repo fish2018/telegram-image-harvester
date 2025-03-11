@@ -1,5 +1,6 @@
 import json
 from telethon import TelegramClient
+from telethon.tl.types import MessageService
 from telethon.sessions import StringSession
 import os
 import asyncio
@@ -27,51 +28,57 @@ class TelegramImageDownloader:
         self.channel_list = channel_list
         self.download_directory = download_directory
         self.max_messages = max_messages
-        self.batch_size = batch_size  # 每批次处理的消息数量
-        self.max_concurrent_tasks = max_concurrent_tasks  # 最大并发任务数量
-        self.request_delay = request_delay  # 请求间隔（秒）
-        self.zip_info_file = os.path.join(download_directory, "zip_info.json")  # ZIP 文件信息保存路径
+        self.batch_size = batch_size
+        self.max_concurrent_tasks = max_concurrent_tasks
+        self.request_delay = request_delay
+        self.zip_info_file = os.path.join(download_directory, "zip_info.json")
 
-        # 创建 Telegram 客户端
         if not proxy:
             self.client = TelegramClient(StringSession(string_session), api_id, api_hash)
         else:
             self.client = TelegramClient(StringSession(string_session), api_id, api_hash, proxy=proxy)
 
-        # 确保保存目录存在
         if not os.path.exists(self.download_directory):
             os.makedirs(self.download_directory)
 
-        # 初始化 ZIP 信息文件
         if not os.path.exists(self.zip_info_file):
             with open(self.zip_info_file, "w", encoding="utf-8") as f:
-                json.dump([], f)  # 初始化为空列表
+                json.dump([], f)
+
+    def deduplicate_by_message_link(self, messages):
+        """根据 message_link 对消息列表进行去重"""
+        seen = {}
+        deduplicated_messages = []
+        for message in messages:
+            message_link = message.get("message_link")
+            if message_link not in seen:
+                seen[message_link] = True
+                deduplicated_messages.append(message)
+        if deduplicated_messages:
+            deduplicated_messages = sorted(deduplicated_messages, key=lambda x: x["message_link"])
+        return deduplicated_messages
 
     async def download_media(self, message, channel):
         """下载单张图片或即时预览中的图片"""
-        # 检查是否是 ZIP 文件
-        # if message.document and message.document.mime_type == 'application/zip':
-        # 定义支持的压缩文件类型
         compressed_types = {
             'application/zip': '.zip',
             'application/x-rar-compressed': '.rar',
-            'application/x-7z-compressed': '.7z'
+            'application/x-7z-compressed': '.7z',
+            'application/octet-stream': '.zip.001'
         }
-        mime_type = getattr(message.document, 'mime_type', None)
-        file_name = getattr(message.document, 'file_name', None)
+        mime_type = getattr(message.document, 'mime_type', None) if message.document else None
+        file_name = getattr(message.document, 'file_name', None) if message.document else None
 
-        # 判断是否为压缩文件：基于 mime_type 或文件扩展名
         is_compressed = (mime_type in compressed_types) or \
                         (file_name and any(file_name.lower().endswith(ext) for ext in compressed_types.values()))
 
         if is_compressed:
             await self.record_zip_info(message, channel)
-            return  # 跳过 ZIP 文件的下载
+            return
 
         if not self.only_zip:
             if message.photo or (message.document and message.document.mime_type in ['image/jpeg', 'image/png', 'image/gif']):
                 await self.download_file_with_retry(message, channel)
-
             if hasattr(message.media, 'webpage'):
                 url = message.media.webpage.url
                 if 'https://telegra.ph/' in url:
@@ -80,22 +87,20 @@ class TelegramImageDownloader:
     async def record_zip_info(self, message, channel):
         """记录 ZIP 文件的信息到 JSON 文件"""
         zip_info = {
-            "message_link": f"https://t.me/{channel}/{message.id}",  # 消息链接
-            "text": message.text or "",  # 消息文本内容
+            "message_link": f"https://t.me/{channel}/{message.id}",
+            "text": message.text or "",
             "file_name": message.file.name,
-            "file_size": message.document.size,  # 文件大小（字节）
-            "channel": channel,  # 频道名称
-            "message_id": message.id  # 消息 ID
+            "file_size": message.document.size,
+            "channel": channel,
+            "message_id": message.id
         }
 
-        # 读取现有的 ZIP 信息
         with open(self.zip_info_file, "r", encoding="utf-8") as f:
             existing_info = json.load(f)
 
-        # 添加新的 ZIP 信息
         existing_info.append(zip_info)
+        existing_info = self.deduplicate_by_message_link(existing_info)
 
-        # 写回文件
         with open(self.zip_info_file, "w", encoding="utf-8") as f:
             json.dump(existing_info, f, ensure_ascii=False, indent=4)
 
@@ -106,21 +111,21 @@ class TelegramImageDownloader:
         for attempt in range(retries):
             try:
                 await self.download_file(message, channel)
-                break  # 成功下载后退出循环
+                break
             except FileReferenceExpiredError:
                 logger.warning(f"File reference expired for message {message.id}, retrying {attempt + 1}/{retries}...")
                 if attempt == retries - 1:
                     logger.error(f"Failed to download message {message.id} after {retries} attempts.")
             except FloodWaitError as e:
                 logger.warning(f"FloodWaitError: {e}, sleeping for {e.seconds} seconds...")
-                await asyncio.sleep(e.seconds)  # 等待指定时间后重试
+                await asyncio.sleep(e.seconds)
             except Exception as e:
                 logger.error(f"Error downloading message {message.id}: {e}")
                 break
 
     async def download_file(self, message, channel):
         """下载单个文件（图片）"""
-        file_name = f"{message.id}.jpg"  # 这里可以根据需要更改文件名生成逻辑
+        file_name = f"{message.id}.jpg"
         channel_directory = os.path.join(self.download_directory, channel.split('|')[0])
         if not os.path.exists(channel_directory):
             os.makedirs(channel_directory)
@@ -129,7 +134,7 @@ class TelegramImageDownloader:
 
         if not os.path.exists(file_path):
             if message.photo:
-                await message.download_media(file_path)  # 使用 Telethon 的下载功能
+                await message.download_media(file_path)
                 logger.info(f"Downloaded {file_name} from {channel}")
 
     async def download_webpage_photos(self, url, channel):
@@ -151,10 +156,9 @@ class TelegramImageDownloader:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-
         try:
             response = requests.get(url, headers=headers, verify=False)
-            response.raise_for_status()  # 检查请求是否成功
+            response.raise_for_status()
             return response.text
         except Exception as e:
             logger.error(f"获取网页源码失败: {e}")
@@ -170,7 +174,6 @@ class TelegramImageDownloader:
             if src.startswith('/file/'):
                 src = f"https://telegra.ph{src}"
             image_links.append(src)
-
         return image_links
 
     def download_image(self, img_url, channel):
@@ -186,27 +189,24 @@ class TelegramImageDownloader:
             logger.info(f"已下载: {image_name}，跳过。")
             return
 
-        # 重试机制
-        for attempt in range(3):  # 最大重试次数
+        for attempt in range(3):
             try:
-                response = requests.get(img_url, verify=False)  # 设置 verify=False 以跳过 SSL 验证
-                if response.status_code in [404,403]:  # 如果返回 404,403，直接跳过
-                    # logger.warning(f"图片不存在或无权限下载: {image_name}，跳过。")
+                response = requests.get(img_url, verify=False)
+                if response.status_code in [404, 403]:
                     return
-                response.raise_for_status()  # 检查请求是否成功
+                response.raise_for_status()
                 with open(file_path, 'wb') as f:
                     f.write(response.content)
                 logger.info(f"下载完成: {image_name} from {channel}")
-                return  # 成功后返回
+                return
             except requests.exceptions.HTTPError as e:
-                if e.response.status_code in [404,403]:  # 如果返回 404,403，直接跳过
-                    # logger.warning(f"图片不存在或无权限下载: {image_name}，跳过。")
+                if e.response.status_code in [404, 403]:
                     return
                 logger.error(f"下载失败: {image_name}，错误: {e}，正在重试 {attempt + 1}/3...")
-                time.sleep(2)  # 等待一段时间后重试
+                time.sleep(2)
             except Exception as e:
                 logger.error(f"下载失败: {image_name}，错误: {e}，正在重试 {attempt + 1}/3...")
-                time.sleep(2)  # 等待一段时间后重试
+                time.sleep(2)
 
         logger.error(f"下载失败: {image_name}，已达最大重试次数。")
 
@@ -218,19 +218,30 @@ class TelegramImageDownloader:
                 await self.download_media(reply, channel)
 
     async def process_batch(self, channel, offset_id=0):
-        """处理一批消息"""
-        semaphore = asyncio.Semaphore(self.max_concurrent_tasks)  # 限制并发任务数量
+        """处理一批消息，并返回最后一条消息的 ID"""
+        semaphore = asyncio.Semaphore(self.max_concurrent_tasks)
 
         async def limited_download_media(message):
             async with semaphore:
                 await self.download_media(message, channel)
-                await asyncio.sleep(self.request_delay)  # 增加请求间隔
+                await asyncio.sleep(self.request_delay)
 
         tasks = []
+        last_message_id = offset_id  # 记录最后一条消息的 ID
+        message_count = 0  # 记录当前批次实际处理的消息数量
+
         async for message in self.client.iter_messages(channel, limit=self.batch_size, offset_id=offset_id):
-            tasks.append(limited_download_media(message))
-        await asyncio.gather(*tasks)
-        logger.info(f"Finished processing batch for channel {channel} with offset_id {offset_id}")
+            if not isinstance(message, MessageService):  # 跳过服务消息
+                tasks.append(limited_download_media(message))
+                last_message_id = message.id  # 更新最后一条消息的 ID
+                message_count += 1
+            else:
+                logger.info(f"Ignoring service message: {message.id}")
+
+        if tasks:  # 如果有任务，执行它们
+            await asyncio.gather(*tasks)
+        logger.info(f"Finished processing batch for channel {channel} with offset_id {offset_id}, processed {message_count} messages")
+        return last_message_id if message_count > 0 else None  # 返回最后一条消息的 ID，或 None 表示没有更多消息
 
     async def download_images(self):
         """分批异步下载图片"""
@@ -243,30 +254,26 @@ class TelegramImageDownloader:
 
             offset_id = 0
             last_offset_id = None
-            same_offset_count = 0  # 记录连续处理相同 offset_id 的次数
+            same_offset_count = 0
 
             while True:
-                # 处理当前批次
-                await self.process_batch(channel, offset_id)
-
-                # 更新 offset_id 为当前批次最后一条消息的 ID
-                async for message in self.client.iter_messages(channel, limit=1, offset_id=offset_id + self.batch_size):
-                    offset_id = message.id
-
-                # 如果没有更多消息，退出循环
-                if offset_id == 0:
+                next_offset_id = await self.process_batch(channel, offset_id)
+                if next_offset_id is None:  # 没有更多消息
+                    logger.info(f"No more messages to process in channel {channel}")
                     break
+
+                offset_id = next_offset_id  # 更新 offset_id 为当前批次的最后一条消息 ID
 
                 # 检测是否连续处理相同的 offset_id
                 if offset_id == last_offset_id:
                     same_offset_count += 1
-                    if same_offset_count >= 3:  # 如果连续 3 次处理相同的 offset_id，停止程序
+                    if same_offset_count >= 3:
                         logger.error(f"连续 3 次处理相同的 offset_id: {offset_id}，可能无法继续下载。停止处理频道: {channel}")
                         break
                 else:
-                    same_offset_count = 0  # 重置计数器
+                    same_offset_count = 0
 
-                last_offset_id = offset_id  # 更新 last_offset_id
+                last_offset_id = offset_id
 
         logger.info("所有图片下载完成。")
 
@@ -276,19 +283,13 @@ class TelegramImageDownloader:
             self.client.loop.run_until_complete(self.download_images())
 
 
-# 使用示例
 if __name__ == "__main__":
-    # 替换为你的 API ID 和 Hash
     api_id = 6627460
     api_hash = '27a53a0965e486a2bc1b1fcde473b1c4'
     string_session = 'xxx'
-
-    # 下载路径
     download_directory = 'imgs'
-    # 替换为你要下载图片的频道/群组列表
     channel_list = []
-    # 代理 不用代理设置proxy=None
+    only_zip = False
     proxy = (socks.SOCKS5, '127.0.0.1', 7897)
-    # 创建下载器实例并运行
-    downloader = TelegramImageDownloader(api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=proxy, batch_size=1000, max_concurrent_tasks=10, request_delay=0.01, only_zip=False)
+    downloader = TelegramImageDownloader(api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=proxy, batch_size=1000, max_concurrent_tasks=10, request_delay=0.01, only_zip=only_zip)
     downloader.run()
