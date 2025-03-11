@@ -1,6 +1,9 @@
 # telegram-image-harvester
 批量下载指定频道/群组中的图片，支持下载评论中、即时预览(telegraph)中的图片  
 
+`TIHarvester`用于下载图片，压缩包信息则保存到`zip_info.json`
+`TGSender`读取`zip_info.json`将压缩包发送到指定频道/群组(直接复用Media对象，不会进行下载上传操作)
+
 # 使用说明
 - 使用时将string_session替换为自己的，可以从 https://tg.uu8.pro/ 获取  
 - 安装依赖
