@@ -21,3 +21,6 @@
 - 解决`FileReferenceExpiredError`异常，Telegram 的文件引用有一定的有效期，过期后自动重新获取
 - `zip_info.json`增加文件大小的记录
 - 下载图片404时不再重试
+- 修复offset_id不能自动递增bug
+- 排除`MessageService`类型消息
+- 支持压缩包分卷的消息，其`mime_type`类型为`application/octet-stream`
