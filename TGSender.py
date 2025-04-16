@@ -1,5 +1,6 @@
 import json
 import os
+import socks
 import logging
 import asyncio
 import random
@@ -58,16 +59,26 @@ class TelegramMessageSender:
         return data["metadata"].get("last_sent_index", -1)
 
     async def check_existing_messages(self) -> set:
-        """异步检查目标频道最近500条消息的文本内容"""
+        """异步检查目标频道最近100条消息的文本内容"""
         existing_texts = set()
         try:
-            async for message in self.client.iter_messages(self.target_channel, limit=500):
+            async for message in self.client.iter_messages(self.target_channel, limit=100):
                 if message.text:
                     existing_texts.add(message.text)
         except RPCError as e:
             logger.error(f"检查历史消息失败: {e}")
         return existing_texts
 
+    async def check_file_exists(self, file_name: str) -> bool:
+        """异步检查目标频道中是否已存在同名文件"""
+        try:
+            async for message in self.client.iter_messages(self.target_channel, search=file_name):
+                if message.file and message.file.name == file_name:
+                    return True  # 文件名匹配，文件已存在
+            return False  # 未找到同名文件
+        except RPCError as e:
+            logger.error(f"搜索文件失败: {e}")
+            return False  # 搜索失败，默认假设文件不存在
     async def copy_and_send_messages(self, source_chat: str, message_ids: List[int], target_chat: str, existing_texts: set):
         """异步批量复制并发送消息"""
         try:
@@ -88,6 +99,11 @@ class TelegramMessageSender:
                     message_link = f"https://t.me/{source_chat}/{message.id}"
                     if message.text in existing_texts:
                         logger.info(f"消息已存在，跳过: {message_link}")
+                        continue
+                    is_exists = await self.check_file_exists(message.file.name)
+                    if is_exists:
+                        continue
+                    if 'apk' in message.file.name:
                         continue
                     await self.client.send_message(
                         target_chat,
@@ -169,9 +185,11 @@ if __name__ == '__main__':
     API_ID = 6627460
     API_HASH = "27a53a0965e486a2bc1b1fcde473b1c4"
     STRING_SESSION = "xxx"
+
     JSON_PATH = "zip_info.json"
     TARGET_CHANNEL = "sicangpinjian"
     PROXY = None
+    # PROXY = (socks.SOCKS5, '127.0.0.1', 7897)
 
     # 创建发送器实例
     sender = TelegramMessageSender(API_ID, API_HASH, STRING_SESSION, JSON_PATH, TARGET_CHANNEL, PROXY)
