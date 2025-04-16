@@ -62,6 +62,7 @@ class TelegramImageDownloader:
         """下载单张图片或即时预览中的图片"""
         compressed_types = {
             'application/zip': '.zip',
+            'application/vnd.rar': '.rar',
             'application/x-rar-compressed': '.rar',
             'application/x-7z-compressed': '.7z',
             'application/octet-stream': '.zip.001'
@@ -217,13 +218,20 @@ class TelegramImageDownloader:
             async for reply in self.client.iter_messages(channel, reply_to=message.id):
                 await self.download_media(reply, channel)
 
-    async def process_batch(self, channel, offset_id=0):
+    async def process_batch(self, channel, offset_id=0, handle_reply=False):
         """处理一批消息，并返回最后一条消息的 ID"""
         semaphore = asyncio.Semaphore(self.max_concurrent_tasks)
 
-        async def limited_download_media(message):
+        async def limited_download_media(message, handle_reply=False):
             async with semaphore:
                 await self.download_media(message, channel)
+                # 下载评论中的资源
+                if handle_reply:
+                    if message.replies and message.replies.comments:
+                        logger.info(f"正在处理 {channel} 消息ID {message.id} 的评论")
+                        async for reply in self.client.iter_messages(channel, reply_to=message.id):
+                            if reply.media:
+                                await self.download_media(reply, channel)
                 await asyncio.sleep(self.request_delay)
 
         tasks = []
@@ -232,7 +240,7 @@ class TelegramImageDownloader:
 
         async for message in self.client.iter_messages(channel, limit=self.batch_size, offset_id=offset_id):
             if not isinstance(message, MessageService):  # 跳过服务消息
-                tasks.append(limited_download_media(message))
+                tasks.append(limited_download_media(message,handle_reply))
                 last_message_id = message.id  # 更新最后一条消息的 ID
                 message_count += 1
             else:
@@ -246,18 +254,18 @@ class TelegramImageDownloader:
     async def download_images(self):
         """分批异步下载图片"""
         for channel in self.channel_list:
-            reply = False
+            handle_reply = False
             if 'reply' in channel:
                 channel = channel.split('|')[0]
-                reply = True
-            logger.info(f"Processing channel: {channel}")
+                handle_reply = True
+            logger.info(f"Processing channel: {channel} handle_reply: {handle_reply}")
 
             offset_id = 0
             last_offset_id = None
             same_offset_count = 0
 
             while True:
-                next_offset_id = await self.process_batch(channel, offset_id)
+                next_offset_id = await self.process_batch(channel, offset_id, handle_reply)
                 if next_offset_id is None:  # 没有更多消息
                     logger.info(f"No more messages to process in channel {channel}")
                     break
@@ -287,9 +295,11 @@ if __name__ == "__main__":
     api_id = 6627460
     api_hash = '27a53a0965e486a2bc1b1fcde473b1c4'
     string_session = 'xxx'
+
     download_directory = 'imgs'
-    channel_list = []
-    only_zip = False
-    proxy = (socks.SOCKS5, '127.0.0.1', 7897)
+    channel_list = ["tttkid","kid2333333","xiucheduixa","pusajie2","pusajie"]
+    only_zip = True
+    # proxy = (socks.SOCKS5, '127.0.0.1', 7897)
+    proxy = None
     downloader = TelegramImageDownloader(api_id, api_hash, channel_list, download_directory, max_messages=None, proxy=proxy, batch_size=1000, max_concurrent_tasks=10, request_delay=0.01, only_zip=only_zip)
     downloader.run()
