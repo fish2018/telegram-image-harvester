@@ -6,7 +6,7 @@
 `TGZIPForwarder`从指定频道/群组转发压缩包到目标频道/群组，支持转发评论中的压缩包
 
 # 使用说明
-- 使用时将string_session替换为自己的，可以从 https://tg.uu8.pro/ 获取  
+- 使用时将string_session替换为自己的，可以从 https://tgs.252035.xyz/ 获取  
 - 安装依赖
   ```
   pip3 install telethon requests beautifulsoup4 urllib3
